@@ -51,6 +51,12 @@ class GithubRepositoryAccessor implements Tool
 
             [$accessToken, $owner] = $this->resolveRepositoryCredentials($repository);
 
+            $repoName = $repository;
+            if (str_contains($repository, '/')) {
+                $parts = explode('/', $repository);
+                $repoName = trim(end($parts));
+            }
+
             if ($accessToken === '' || $owner === '') {
                 return sprintf(
                     'Validation error: missing configured GitHub credentials for repository "%s". Set github.repositories.%s.owner and github.repositories.%s.token.',
@@ -65,7 +71,7 @@ class GithubRepositoryAccessor implements Tool
 
             if ($action === 'list_files') {
                 return $this->listFilesResponse(
-                    $this->fetchRepositoryFiles($client, $owner, $repository, $path, $request->string('branch')->toString())
+                    $this->fetchRepositoryFiles($client, $owner, $repoName, $path, $request->string('branch')->toString())
                 );
             }
 
@@ -74,11 +80,11 @@ class GithubRepositoryAccessor implements Tool
             }
 
             if ($action === 'read_file') {
-                $repositoryInfo = $client->repo()->show($owner, $repository);
+                $repositoryInfo = $client->repo()->show($owner, $repoName);
                 $defaultBranch = (string) ($repositoryInfo['default_branch'] ?? 'main');
                 $branch = $request->string('branch')->toString();
                 $branch = $branch !== '' ? $branch : $defaultBranch;
-                $file = $client->repo()->contents()->show($owner, $repository, $path, $branch);
+                $file = $client->repo()->contents()->show($owner, $repoName, $path, $branch);
 
                 if (! isset($file['content']) || ! is_string($file['content'])) {
                     return 'GitHub API error: file content was missing from the response.';
@@ -100,11 +106,11 @@ class GithubRepositoryAccessor implements Tool
             }
 
             $changeSummary = $request->string('change_summary')->toString();
-            $repositoryInfo = $client->repo()->show($owner, $repository);
+            $repositoryInfo = $client->repo()->show($owner, $repoName);
             $defaultBranch = (string) ($repositoryInfo['default_branch'] ?? 'main');
             $baseBranch = $request->string('base_branch')->toString();
             $baseBranch = $baseBranch !== '' ? $baseBranch : $defaultBranch;
-            $baseBranchInfo = $client->repo()->branches($owner, $repository, $baseBranch);
+            $baseBranchInfo = $client->repo()->branches($owner, $repoName, $baseBranch);
             $baseSha = $baseBranchInfo['commit']['sha'] ?? null;
 
             if (! is_string($baseSha) || $baseSha === '') {
@@ -113,12 +119,12 @@ class GithubRepositoryAccessor implements Tool
 
             $branchName = sprintf('ai/update-%s', now()->format('YmdHis'));
 
-            $client->git()->references()->create($owner, $repository, [
+            $client->git()->references()->create($owner, $repoName, [
                 'ref' => sprintf('refs/heads/%s', $branchName),
                 'sha' => $baseSha,
             ]);
 
-            $currentFile = $client->repo()->contents()->show($owner, $repository, $path, $baseBranch);
+            $currentFile = $client->repo()->contents()->show($owner, $repoName, $path, $baseBranch);
             $currentSha = $currentFile['sha'] ?? null;
 
             if (! is_string($currentSha) || $currentSha === '') {
@@ -127,7 +133,7 @@ class GithubRepositoryAccessor implements Tool
 
             $commitMessage = $request->string('commit_message')->toString();
             $commitMessage = $commitMessage !== '' ? $commitMessage : sprintf('Update %s', $path);
-            $client->repo()->contents()->update($owner, $repository, $path, $content, $commitMessage, $currentSha, $branchName);
+            $client->repo()->contents()->update($owner, $repoName, $path, $content, $commitMessage, $currentSha, $branchName);
 
             $title = $request->string('pr_title')->toString();
             $title = $title !== '' ? $title : sprintf('Update %s', $path);
@@ -135,7 +141,7 @@ class GithubRepositoryAccessor implements Tool
                 ? sprintf("Requested change summary:\n\n%s", $changeSummary)
                 : 'Changes requested through the GitHub repository accessor tool.';
 
-            $pullRequest = $client->pullRequest()->create($owner, $repository, [
+            $pullRequest = $client->pullRequest()->create($owner, $repoName, [
                 'base' => $baseBranch,
                 'head' => $branchName,
                 'title' => $title,
@@ -264,21 +270,21 @@ class GithubRepositoryAccessor implements Tool
     protected function fetchRepositoryFiles(
         Client $client,
         string $owner,
-        string $repository,
+        string $repoName,
         string $pathPrefix = '',
         string $branch = ''
     ): array {
-        $repositoryInfo = $client->repo()->show($owner, $repository);
+        $repositoryInfo = $client->repo()->show($owner, $repoName);
         $defaultBranch = (string) ($repositoryInfo['default_branch'] ?? 'main');
         $selectedBranch = $branch !== '' ? $branch : $defaultBranch;
-        $branchInfo = $client->repo()->branches($owner, $repository, $selectedBranch);
+        $branchInfo = $client->repo()->branches($owner, $repoName, $selectedBranch);
         $treeSha = $branchInfo['commit']['sha'] ?? null;
 
         if (! is_string($treeSha) || $treeSha === '') {
             return [];
         }
 
-        $treeResponse = $client->git()->trees()->show($owner, $repository, $treeSha, true);
+        $treeResponse = $client->git()->trees()->show($owner, $repoName, $treeSha, true);
         $treeEntries = $treeResponse['tree'] ?? [];
 
         if (! is_array($treeEntries)) {

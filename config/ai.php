@@ -110,6 +110,12 @@ return [
             'url' => env('OLLAMA_BASE_URL', 'http://localhost:11434'),
         ],
 
+        'opencode-zen' => [
+            'driver' => 'openrouter',
+            'key' => env('OPENCODE_ZEN_API_KEY'),
+            'url' => env('OPENCODE_ZEN_URL', 'https://opencode.ai/zen/v1'),
+        ],
+
         'openai' => [
             'driver' => 'openai',
             'key' => env('OPENAI_API_KEY'),
@@ -132,11 +138,16 @@ return [
     ],
 
     'provider_failover' => [
-        'gemini' => [
-            'gemini-3-flash-preview',
-            'gemini-2.5-flash',
-            'gemini-2.5-flash-lite',
-        ],
+        'opencode-zen' => array_map(
+            'trim',
+            explode(
+                ',',
+                env(
+                    'OPENCODE_ZEN_FAILOVER',
+                    'deepseek-v4-flash-free,mimo-v2.5-free'
+                )
+            )
+        ),
     ],
 
 ];
