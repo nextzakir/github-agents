@@ -4,6 +4,7 @@ An AI-powered GitHub repository assistant built with Laravel 13 and the Laravel 
 
 ## Features
 
+- **CI/CD** — Tests run automatically on every PR via GitHub Actions. Merges require passing tests and branch protection is enforced for all users.
 - **AI chat over any GitHub repository** — Ask questions, explore code, request changes. Just paste a GitHub repo link and go.
 - **CLI interface** — Interactive chat with slash commands (`/provider`, `/model`, `/conversations`, etc.)
 - **OpenAI-compatible API** — Drop-in replacement for `POST /chat/completions` and `GET /models`
