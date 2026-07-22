@@ -3,15 +3,12 @@
 namespace App\Http\Controllers\RepositoryAssistants;
 
 use App\Ai\Agents\RepositoryAssistant;
-use App\Ai\Tools\GithubRepositoryAccessor;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\OpenAiChatCompletionsRequest;
 use App\Models\User;
 use Illuminate\Http\JsonResponse;
-use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Str;
 use Laravel\Ai\Contracts\Agent;
-use Laravel\Ai\Tools\Request as ToolRequest;
 use Throwable;
 
 class ChatCompletionsController extends Controller
@@ -19,7 +16,7 @@ class ChatCompletionsController extends Controller
     /**
      * Handle the incoming request.
      */
-    public function __invoke(OpenAiChatCompletionsRequest $request, string $repository = ''): JsonResponse
+    public function __invoke(OpenAiChatCompletionsRequest $request): JsonResponse
     {
         $validated = $request->validated();
         $prompt = $this->latestUserMessage($validated['messages']);
@@ -39,14 +36,11 @@ class ChatCompletionsController extends Controller
             ['name' => 'API Client', 'password' => bcrypt(Str::random(32))]
         );
 
-        $repository = trim($repository);
         $agent = new RepositoryAssistant;
 
         $conversationId = (string) ($validated['conversation_id'] ?? '');
 
-        $isNewConversation = $conversationId === '';
-
-        if (! $isNewConversation) {
+        if ($conversationId !== '') {
             $agent->continue($conversationId, as: $user);
         } else {
             $agent->forUser($user);
@@ -56,17 +50,6 @@ class ChatCompletionsController extends Controller
             model: (string) ($validated['model'] ?? ''),
             providerOverride: (string) ($validated['provider'] ?? ''),
         );
-
-        $githubToolContext = $repository !== ''
-            ? $this->buildGithubToolContext($repository)
-            : null;
-
-        if ($isNewConversation) {
-            $prompt = $this->withGithubToolContext(
-                prompt: $prompt,
-                githubToolContext: $githubToolContext,
-            );
-        }
 
         try {
             [$response, $resolvedProvider, $resolvedModel] = $this->promptWithProviderModelFallback(
@@ -301,125 +284,6 @@ class ChatCompletionsController extends Controller
             || str_contains($message, 'overloaded')
             || str_contains($message, 'timeout')
             || str_contains($message, 'deadline exceeded');
-    }
-
-    /**
-     * @param  array<string, string>|null  $githubToolContext
-     */
-    protected function withGithubToolContext(string $prompt, ?array $githubToolContext): string
-    {
-        if (! is_array($githubToolContext)) {
-            return $prompt;
-        }
-
-        $repository = trim((string) ($githubToolContext['repository'] ?? ''));
-        $starterFiles = trim((string) ($githubToolContext['starter_files'] ?? ''));
-
-        if ($repository === '') {
-            return $prompt;
-        }
-
-        $lines = [
-            'GitHub tool context for this request:',
-            '- When calling GithubRepositoryAccessor, always include these parameters unless the user explicitly asks to override them:',
-            "- repository: {$repository}",
-            '- Use action=list_files when you need to discover file paths before calling read_file.',
-            '- After using tools, always provide a concise, human-readable answer for the user.',
-        ];
-
-        if ($starterFiles !== '') {
-            $lines[] = "- Good starting files for repo/project context: {$starterFiles}";
-        }
-
-        $lines[] = '';
-        $lines[] = 'User request:';
-        $lines[] = $prompt;
-
-        return implode("\n", $lines);
-    }
-
-    /**
-     * @return array<string, string>|null
-     */
-    protected function buildGithubToolContext(string $repositoryName): ?array
-    {
-        if (trim($repositoryName) === '') {
-            return null;
-        }
-
-        return [
-            'repository' => trim($repositoryName),
-            'starter_files' => $this->discoverStarterFiles(trim($repositoryName)),
-        ];
-    }
-
-    protected function discoverStarterFiles(string $repositoryName): string
-    {
-        if (trim($repositoryName) === '') {
-            return '';
-        }
-
-        $cacheKey = sprintf('repository_assistant:starter_files:%s', trim($repositoryName));
-
-        return Cache::remember($cacheKey, now()->addMinutes(10), function () use ($repositoryName): string {
-            $response = (new GithubRepositoryAccessor)->handle(new ToolRequest([
-                'action' => 'list_files',
-                'repository' => $repositoryName,
-            ]));
-
-            if (! is_string($response) || ! str_starts_with(trim($response), '{')) {
-                return '';
-            }
-
-            $decoded = json_decode($response, true);
-            $files = is_array($decoded) ? ($decoded['files'] ?? null) : null;
-
-            if (! is_array($files)) {
-                return '';
-            }
-
-            $filePaths = [];
-
-            foreach ($files as $file) {
-                if (is_string($file) && trim($file) !== '') {
-                    $filePaths[] = trim($file);
-                }
-            }
-
-            if ($filePaths === []) {
-                return '';
-            }
-
-            $prioritizedBasenames = [
-                'readme.md',
-                'composer.json',
-                'package.json',
-                'docker-compose.yml',
-                'docker-compose.yaml',
-                '.env.example',
-                'routes/web.php',
-                'routes/api.php',
-                'appserviceprovider.php',
-                'bootstrap/app.php',
-            ];
-
-            $selected = [];
-
-            foreach ($prioritizedBasenames as $basename) {
-                foreach ($filePaths as $filePath) {
-                    if (strtolower(basename($filePath)) === $basename) {
-                        $selected[] = $filePath;
-                        break;
-                    }
-                }
-            }
-
-            if ($selected === []) {
-                $selected = array_slice($filePaths, 0, 5);
-            }
-
-            return implode(', ', array_slice(array_values(array_unique($selected)), 0, 8));
-        });
     }
 
     protected function errorResponse(Throwable $e): JsonResponse

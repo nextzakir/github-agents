@@ -6,12 +6,9 @@ use App\Http\Controllers\RepositoryAssistants\ModelsController;
 use Illuminate\Support\Facades\Route;
 
 Route::prefix('v1')->group(function (): void {
-    Route::get('/{repository}/models', ModelsController::class)
-        ->where('repository', '[^/]+(?:/[^/]+)?');
+    Route::get('/models', ModelsController::class);
 
-    Route::post('/{repository}/chat/completions', ChatCompletionsController::class)
-        ->where('repository', '[^/]+(?:/[^/]+)?');
+    Route::post('/chat/completions', ChatCompletionsController::class);
 
-    Route::get('/{repository}/conversations', ConversationsController::class)
-        ->where('repository', '[^/]+(?:/[^/]+)?');
+    Route::get('/conversations', ConversationsController::class);
 });

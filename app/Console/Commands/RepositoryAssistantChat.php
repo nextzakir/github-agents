@@ -3,13 +3,10 @@
 namespace App\Console\Commands;
 
 use App\Ai\Agents\RepositoryAssistant;
-use App\Ai\Tools\GithubRepositoryAccessor;
 use App\Models\User;
 use Illuminate\Console\Command;
-use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Laravel\Ai\Contracts\Agent;
-use Laravel\Ai\Tools\Request as ToolRequest;
 use Throwable;
 
 use function Laravel\Prompts\spin;
@@ -17,13 +14,7 @@ use function Laravel\Prompts\text;
 
 class RepositoryAssistantChat extends Command
 {
-    /**
-     * The name and signature of the console command.
-     *
-     * @var string
-     */
     protected $signature = 'repository-assistant:chat
-        {repository : GitHub repository (owner/repo)}
         {--conversation= : Continue a specific conversation UUID}
         {--latest : Continue the most recent conversation}
         {--provider= : AI provider name, e.g. openai or gemini}
@@ -31,19 +22,10 @@ class RepositoryAssistantChat extends Command
         {--timeout=90 : Request timeout in seconds}
         {--show-usage : Show token usage after each response}';
 
-    /**
-     * The console command description.
-     *
-     * @var string
-     */
     protected $description = 'Chat with a repository-scoped AI assistant.';
 
-    /**
-     * Execute the console command.
-     */
     public function handle(): int
     {
-        $repository = trim((string) $this->argument('repository'));
         $agent = new RepositoryAssistant;
 
         $user = User::firstOrCreate(
@@ -72,12 +54,8 @@ class RepositoryAssistantChat extends Command
             $this->info('Started new conversation.');
         }
 
-        $shouldAttachGithubPromptContext = ! (is_string($conversationId) && $conversationId !== '');
-
-        $this->line("Repository: {$repository}");
         $this->line("Agent: {$agentClass}");
         $this->line('Type `/help` for commands. Type `/exit` to stop.');
-        $githubPromptContext = $this->buildGithubPromptContext($repository);
 
         while (true) {
             $input = trim(text('You'));
@@ -99,8 +77,6 @@ class RepositoryAssistantChat extends Command
                     $provider,
                     $model,
                     $showUsage,
-                    $shouldAttachGithubPromptContext,
-                    $repository,
                     $agentClass,
                 );
 
@@ -112,15 +88,10 @@ class RepositoryAssistantChat extends Command
             }
 
             try {
-                $prompt = $githubPromptContext !== ''
-                    && $shouldAttachGithubPromptContext
-                    ? $githubPromptContext."\n\nUser request:\n".$input
-                    : $input;
-
                 $response = spin(
                     fn () => $this->promptWithProviderModelFallback(
                         agent: $agent,
-                        prompt: $prompt,
+                        prompt: $input,
                         requestedProvider: $provider,
                         requestedModel: $model,
                         timeout: $timeout,
@@ -130,7 +101,6 @@ class RepositoryAssistantChat extends Command
             } catch (Throwable $e) {
                 $this->error("AI request failed: {$e->getMessage()}");
                 $this->line('Try: set provider with `/provider gemini` (or `/provider openai`) and confirm API key env vars.');
-                $this->line('You can inspect repository files with `/files` and read one with `/file <path>`.');
 
                 continue;
             }
@@ -139,8 +109,6 @@ class RepositoryAssistantChat extends Command
                 $conversationId = $response->conversationId;
                 $agent->continue($conversationId, as: $user);
             }
-
-            $shouldAttachGithubPromptContext = false;
 
             $assistantText = $this->extractResponseText($response);
 
@@ -178,8 +146,6 @@ class RepositoryAssistantChat extends Command
         string &$provider,
         string &$model,
         bool &$showUsage,
-        bool &$shouldAttachGithubPromptContext,
-        string $repository,
         string $agentClass,
     ): bool {
         $parts = preg_split('/\s+/', $input, 2);
@@ -202,8 +168,6 @@ class RepositoryAssistantChat extends Command
             $this->line('/provider <name|none>');
             $this->line('/model <name|none>');
             $this->line('/usage <on|off>');
-            $this->line('/files [path-prefix]');
-            $this->line('/file <path>');
             $this->line('/clear or /cls');
 
             return true;
@@ -215,7 +179,6 @@ class RepositoryAssistantChat extends Command
             $activeModel = $model !== '' ? $model : 'default';
             $usageState = $showUsage ? 'on' : 'off';
 
-            $this->line("Repository: {$repository}");
             $this->line('Agent: '.RepositoryAssistant::class);
             $this->line("Conversation: {$activeConversation}");
             $this->line("Provider: {$activeProvider}");
@@ -234,7 +197,6 @@ class RepositoryAssistantChat extends Command
         if ($command === '/new') {
             $conversationId = null;
             $agent->forUser($user);
-            $shouldAttachGithubPromptContext = true;
             $this->info('Started a new conversation.');
 
             return true;
@@ -280,7 +242,6 @@ class RepositoryAssistantChat extends Command
 
             $conversationId = $argument;
             $agent->continue($conversationId, as: $user);
-            $shouldAttachGithubPromptContext = false;
             $this->info("Continuing conversation: {$conversationId}");
 
             return true;
@@ -297,7 +258,6 @@ class RepositoryAssistantChat extends Command
 
             $conversationId = $lastConversationId;
             $agent->continue($conversationId, as: $user);
-            $shouldAttachGithubPromptContext = false;
             $this->info("Continuing last conversation: {$conversationId}");
 
             return true;
@@ -351,58 +311,8 @@ class RepositoryAssistantChat extends Command
             return true;
         }
 
-        if ($command === '/files') {
-            $filesResponse = (new GithubRepositoryAccessor)->handle(new ToolRequest([
-                'action' => 'list_files',
-                'repository' => trim($repository),
-                'path' => $argument,
-            ]));
-
-            $decoded = is_string($filesResponse) ? json_decode($filesResponse, true) : null;
-            $files = is_array($decoded) ? ($decoded['files'] ?? null) : null;
-
-            if (! is_array($files)) {
-                $this->renderAssistantMessage((string) $filesResponse, 'Files');
-
-                return true;
-            }
-
-            $normalizedFiles = [];
-
-            foreach ($files as $file) {
-                if (is_string($file) && trim($file) !== '') {
-                    $normalizedFiles[] = trim($file);
-                }
-            }
-
-            $normalizedFiles = array_slice(array_values(array_unique($normalizedFiles)), 0, 200);
-
-            $this->renderAssistantMessage(
-                $normalizedFiles === []
-                    ? 'No files matched the requested path prefix.'
-                    : implode("\n", $normalizedFiles),
-                'Files'
-            );
-
-            return true;
-        }
-
-        if ($command === '/file') {
-            $path = $argument;
-
-            if ($path === '') {
-                $this->error('Usage: /file <path>.');
-
-                return true;
-            }
-
-            $fileContent = (new GithubRepositoryAccessor)->handle(new ToolRequest([
-                'action' => 'read_file',
-                'repository' => trim($repository),
-                'path' => $path,
-            ]));
-
-            $this->renderAssistantMessage((string) $fileContent, 'File');
+        if (in_array($command, ['/files', '/file'], true)) {
+            $this->error('No repository has been set. Ask the agent to work with a repository first (e.g., \'look at https://github.com/owner/repo\').');
 
             return true;
         }
@@ -549,94 +459,6 @@ class RepositoryAssistantChat extends Command
             || str_contains($message, 'overloaded')
             || str_contains($message, 'timeout')
             || str_contains($message, 'deadline exceeded');
-    }
-
-    protected function buildGithubPromptContext(string $repository): string
-    {
-        if (trim($repository) === '') {
-            return '';
-        }
-
-        $lines = [
-            'GitHub tool context for this session:',
-            '- When calling GithubRepositoryAccessor, always include these parameters unless the user explicitly asks to override them:',
-            '- repository: '.trim($repository),
-            '- Use action=list_files when you need to discover file paths before read_file or create_pull_request.',
-            '- After using tools, always provide a concise, human-readable answer for the user.',
-        ];
-
-        $starterFiles = $this->discoverStarterFiles(trim($repository));
-
-        if ($starterFiles !== '') {
-            $lines[] = '- Good starting files for repo/project context: '.$starterFiles;
-        }
-
-        return implode("\n", $lines);
-    }
-
-    protected function discoverStarterFiles(string $repositoryName): string
-    {
-        if (trim($repositoryName) === '') {
-            return '';
-        }
-
-        $cacheKey = sprintf('repository_assistant:starter_files:%s', trim($repositoryName));
-
-        return Cache::remember($cacheKey, now()->addMinutes(10), function () use ($repositoryName): string {
-            $response = (new GithubRepositoryAccessor)->handle(new ToolRequest([
-                'action' => 'list_files',
-                'repository' => trim($repositoryName),
-            ]));
-
-            $decoded = is_string($response) ? json_decode($response, true) : null;
-            $files = is_array($decoded) ? ($decoded['files'] ?? null) : null;
-
-            if (! is_array($files)) {
-                return '';
-            }
-
-            $filePaths = [];
-
-            foreach ($files as $file) {
-                if (is_string($file) && trim($file) !== '') {
-                    $filePaths[] = trim($file);
-                }
-            }
-
-            if ($filePaths === []) {
-                return '';
-            }
-
-            $prioritizedBasenames = [
-                'readme.md',
-                'composer.json',
-                'package.json',
-                'docker-compose.yml',
-                'docker-compose.yaml',
-                '.env.example',
-                'routes/web.php',
-                'routes/api.php',
-                'appserviceprovider.php',
-                'bootstrap/app.php',
-            ];
-
-            $selected = [];
-
-            foreach ($prioritizedBasenames as $basename) {
-                foreach ($filePaths as $filePath) {
-                    if (strtolower(basename($filePath)) === $basename) {
-                        $selected[] = $filePath;
-                        break;
-                    }
-                }
-            }
-
-            if ($selected === []) {
-                $selected = array_slice($filePaths, 0, 5);
-            }
-
-            return implode(', ', array_slice(array_values(array_unique($selected)), 0, 8));
-        });
     }
 
     protected function renderAssistantMessage(string $message, string $title = 'Assistant'): void

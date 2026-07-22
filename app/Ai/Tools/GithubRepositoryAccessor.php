@@ -43,7 +43,9 @@ class GithubRepositoryAccessor implements Tool
                 );
             }
 
-            $repository = trim($request->string('repository')->toString());
+            $repository = $this->normalizeRepositoryIdentifier(
+                trim($request->string('repository')->toString())
+            );
 
             if ($repository === '') {
                 return 'Validation error: "repository" is required for list_files, read_file, and create_pull_request.';
@@ -203,6 +205,28 @@ class GithubRepositoryAccessor implements Tool
                 ->string()
                 ->description('Optional pull request title.'),
         ];
+    }
+
+    /**
+     * Normalize a repository identifier. Accepts full GitHub URLs or "owner/repo" format.
+     */
+    protected function normalizeRepositoryIdentifier(string $repository): string
+    {
+        $repository = trim($repository);
+
+        if ($repository === '') {
+            return '';
+        }
+
+        if (preg_match('~(?:https?://)?(?:www\.)?github\.com[:/]([^/]+/[^/.?#]+)~i', $repository, $matches) === 1) {
+            return trim($matches[1], '/');
+        }
+
+        if (preg_match('~git@github\.com:([^/]+/[^/.]+)~i', $repository, $matches) === 1) {
+            return trim($matches[1], '/');
+        }
+
+        return $repository;
     }
 
     /**

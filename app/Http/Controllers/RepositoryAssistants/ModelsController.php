@@ -10,7 +10,7 @@ class ModelsController extends Controller
     /**
      * Handle the incoming request.
      */
-    public function __invoke(string $repository = ''): JsonResponse
+    public function __invoke(): JsonResponse
     {
         $providerConfigs = config('ai.providers', []);
         $providerFailover = config('ai.provider_failover', []);
@@ -46,12 +46,16 @@ class ModelsController extends Controller
 
         $defaultProvider = config('ai.default');
 
-        if (is_string($defaultProvider) && $defaultProvider !== '' && ! collect($models)->contains('id', $defaultProvider)) {
+        if (is_string($defaultProvider) && $defaultProvider !== '' && ! collect($models)->contains(fn (array $model): bool => $model['owned_by'] === $defaultProvider || $model['id'] === $defaultProvider)) {
             $defaultProviderConfig = is_array($providerConfigs[$defaultProvider] ?? null) ? $providerConfigs[$defaultProvider] : [];
             $defaultProviderDriver = is_string($defaultProviderConfig['driver'] ?? null) && trim((string) $defaultProviderConfig['driver']) !== ''
                 ? trim((string) $defaultProviderConfig['driver'])
                 : $defaultProvider;
-            $models[] = $this->toModelRecord($defaultProviderDriver, $defaultProvider);
+            $defaultModelIds = $this->resolveModelIdsForProvider($defaultProvider, $defaultProviderConfig, $providerFailover);
+
+            foreach ($defaultModelIds as $modelId) {
+                $models[] = $this->toModelRecord($defaultProviderDriver, $modelId);
+            }
         }
 
         return response()->json([
@@ -67,7 +71,7 @@ class ModelsController extends Controller
      */
     protected function resolveModelIdsForProvider(string $providerName, array $providerConfig, array $providerFailover): array
     {
-        $modelIds = [$providerName];
+        $modelIds = [];
 
         $configuredFailover = $providerFailover[$providerName] ?? null;
 
@@ -87,6 +91,10 @@ class ModelsController extends Controller
             if (is_string($modelId) && trim($modelId) !== '') {
                 $modelIds[] = trim($modelId);
             }
+        }
+
+        if ($modelIds === []) {
+            $modelIds[] = $providerName;
         }
 
         return array_values(array_unique($modelIds));

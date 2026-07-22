@@ -316,6 +316,19 @@ class GithubRepositoryAccessorTest extends TestCase
         $this->assertSame('Validation error: "path" is required for read_file and create_pull_request.', $result);
     }
 
+    public function test_it_normalizes_github_url_to_owner_repo(): void
+    {
+        $reflection = new \ReflectionMethod(GithubRepositoryAccessor::class, 'normalizeRepositoryIdentifier');
+        $reflection->setAccessible(true);
+
+        $tool = new GithubRepositoryAccessor;
+
+        $this->assertSame('laravel/framework', $reflection->invoke($tool, 'https://github.com/laravel/framework'));
+        $this->assertSame('laravel/framework', $reflection->invoke($tool, 'https://github.com/laravel/framework.git'));
+        $this->assertSame('laravel/framework', $reflection->invoke($tool, 'laravel/framework'));
+        $this->assertSame('', $reflection->invoke($tool, ''));
+    }
+
     public function test_it_requires_configured_credentials_for_repository_actions(): void
     {
         $tool = Mockery::mock(GithubRepositoryAccessor::class)

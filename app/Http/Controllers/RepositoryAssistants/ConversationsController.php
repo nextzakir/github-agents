@@ -10,7 +10,7 @@ use Illuminate\Support\Facades\DB;
 
 class ConversationsController extends Controller
 {
-    public function __invoke(Request $request, string $repository = ''): JsonResponse
+    public function __invoke(Request $request): JsonResponse
     {
         $user = User::firstOrCreate(
             ['email' => 'api@system.local'],

@@ -4,11 +4,11 @@ An AI-powered GitHub repository assistant built with Laravel 13 and the Laravel 
 
 ## Features
 
-- **AI chat over any GitHub repository** — Ask questions, explore code, request changes
-- **CLI interface** — Interactive chat with slash commands (`/files`, `/file`, `/provider`, etc.)
+- **AI chat over any GitHub repository** — Ask questions, explore code, request changes. Just paste a GitHub repo link and go.
+- **CLI interface** — Interactive chat with slash commands (`/provider`, `/model`, `/conversations`, etc.)
 - **OpenAI-compatible API** — Drop-in replacement for `POST /chat/completions` and `GET /models`
 - **Multi-provider** — Works with OpenAI, Gemini, Anthropic, and any provider supported by `laravel/ai`
-- **Provider/model failover** — Automatically retries with fallback models on rate limits or errors
+- **Model failover** — Automatically retries with fallback models on rate limits or errors (within the active provider). See `config/ai.php` for the `provider_failover` configuration example.
 - **Conversation memory** — Continues context across turns; resume previous conversations by ID
 - **GitHub tool** — The agent can list repositories, browse files, read file contents, and create pull requests with changes
 - **Conversation pruning** — Built-in Artisan command to clean up old conversation records
@@ -19,7 +19,7 @@ The application is built around two core components:
 
 ### RepositoryAssistant Agent (`app/Ai/Agents/RepositoryAssistant.php`)
 
-A Laravel AI agent (max 15 steps) with a system prompt that instructs it to explore repositories via the GitHub tool before answering, confirm intent before making changes, and only create PRs when explicitly asked.
+A Laravel AI agent (max 15 steps) with a system prompt that instructs it to discover the repository from the user's message (via a GitHub URL or `owner/repo`), explore files via the GitHub tool before answering, confirm intent before making changes, and only create PRs when explicitly asked.
 
 ### GithubRepositoryAccessor Tool (`app/Ai/Tools/GithubRepositoryAccessor.php`)
 
@@ -27,7 +27,7 @@ A tool the agent can invoke with these actions:
 
 | Action | Description |
 |---|---|
-| `list_repositories` | List all configured and accessible GitHub repositories |
+| `list_repositories` | List all accessible GitHub repositories |
 | `list_files` | List files in a repository (with optional path prefix filter) |
 | `read_file` | Read the contents of a specific file |
 | `create_pull_request` | Create a branch, commit file changes, and open a PR |
@@ -39,7 +39,7 @@ Repository credentials are resolved from config (`config/github.php`) — each r
 - PHP 8.3+
 - Composer
 - SQLite (default) or MySQL/PostgreSQL
-- A GitHub access token
+- A GitHub access token with **Contents** (write) and **Pull Requests** (write) permissions on target repositories
 - An AI provider API key (Gemini, OpenAI, Anthropic, etc.)
 
 ## Setup
@@ -67,6 +67,15 @@ php artisan migrate
 npm install && npm run build
 ```
 
+### GitHub Token Permissions
+
+For the agent to read file contents, list files, and create pull requests, your GitHub Personal Access Token must have the following scopes:
+
+- **Contents** (write) — allows listing files, reading file contents, and committing changes
+- **Pull Requests** (write) — allows creating pull requests
+
+Generate a token at https://github.com/settings/tokens with at least these scopes.
+
 ### Configuration
 
 **`.env` variables:**
@@ -87,17 +96,15 @@ npm install && npm run build
 ### CLI Chat
 
 ```bash
-php artisan repository-assistant:chat owner/repo-name
+php artisan repository-assistant:chat
 ```
 
-This starts an interactive chat session. Type your questions or requests and the agent will use the GitHub tool to explore the repository and respond.
+This starts an interactive chat session. If you haven't specified a repository, the agent will ask you for one. You can provide a full GitHub URL like `https://github.com/owner/repo` or just `owner/repo`.
 
 **Slash commands** available during the session:
 
 | Command | Description |
 |---|---|
-| `/files [prefix]` | List files in the repository (optionally filtered by path) |
-| `/file <path>` | Read a specific file |
 | `/provider <name>` | Switch AI provider (`openai`, `gemini`, etc.) |
 | `/model <name>` | Set a specific model |
 | `/new` | Start a new conversation |
@@ -114,7 +121,7 @@ This starts an interactive chat session. Type your questions or requests and the
 **Options:**
 
 ```bash
-php artisan repository-assistant:chat owner/repo-name \
+php artisan repository-assistant:chat \
   --provider=gemini \
   --model=gemini-2.5-flash \
   --conversation=uuid \
@@ -125,19 +132,19 @@ php artisan repository-assistant:chat owner/repo-name \
 
 ### API
 
-The API is compatible with the OpenAI chat completions format.
+The API is compatible with the OpenAI chat completions format. No repository identifier is needed in the URL — tell the agent which repo to use in your message.
 
 ```bash
 # List available models
-GET /api/v1/{owner/repo}/models
+GET /api/v1/models
 
 # Chat with the repository assistant
-POST /api/v1/{owner/repo}/chat/completions
+POST /api/v1/chat/completions
 Content-Type: application/json
 
 {
   "messages": [
-    {"role": "user", "content": "What does this project do?"}
+    {"role": "user", "content": "What does https://github.com/laravel/framework do?"}
   ],
   "model": "gemini-2.5-flash",
   "provider": "gemini",
@@ -145,6 +152,8 @@ Content-Type: application/json
   "timeout": 90
 }
 ```
+
+The agent will extract `laravel/framework` from the URL and explore the repository.
 
 **Response:**
 
@@ -177,7 +186,7 @@ Pass `conversation_id` in subsequent requests to continue the same conversation.
 
 ```bash
 # List recent conversations (paginated, custom extension)
-GET /api/v1/{owner/repo}/conversations?page=1&per_page=20
+GET /api/v1/conversations?page=1&per_page=20
 ```
 
 **Response:**
@@ -240,10 +249,9 @@ php artisan test --compact --filter=test_name
 
 ## How it Works
 
-1. You make a request (CLI or API) with a repository identifier like `owner/repo`
-2. The `RepositoryAssistant` agent begins a conversation with the Laravel AI SDK
-3. On the first turn, the agent receives context about the target repository (discovered starter files)
-4. The agent decides when to invoke the `GithubRepositoryAccessor` tool to list files, read files, or prepare a PR
-5. The agent reasons from the actual file contents and provides you a human-readable answer
-6. The conversation is persisted so you can resume later
-7. Provider/model failover handles rate limits and transient errors gracefully
+1. You start a chat (CLI or API) without specifying a repository
+2. The agent asks which GitHub repository to work with, or you provide a URL in your message
+3. The agent extracts `owner/repo` from the URL and uses the `GithubRepositoryAccessor` tool to list files, read files, or prepare a PR
+4. The agent reasons from the actual file contents and provides you a human-readable answer
+5. The conversation is persisted so you can resume later
+6. Provider/model failover handles rate limits and transient errors gracefully

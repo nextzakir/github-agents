@@ -10,14 +10,11 @@ class RepositoryAssistantChatCommandTest extends TestCase
 {
     use RefreshDatabase;
 
-    public function test_command_accepts_owner_repo_argument(): void
+    public function test_command_has_no_repository_argument(): void
     {
         $command = new RepositoryAssistantChat;
         $definition = $command->getDefinition();
 
-        $this->assertTrue($definition->hasArgument('repository'));
-
-        $argument = $definition->getArgument('repository');
-        $this->assertSame('GitHub repository (owner/repo)', $argument->getDescription());
+        $this->assertFalse($definition->hasArgument('repository'));
     }
 }

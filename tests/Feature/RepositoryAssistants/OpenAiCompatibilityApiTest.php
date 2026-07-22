@@ -15,7 +15,7 @@ class OpenAiCompatibilityApiTest extends TestCase
 
     public function test_models_endpoint_returns_openai_compatible_list_shape(): void
     {
-        $response = $this->getJson('/api/v1/nextzakir/tailscale-policy/models');
+        $response = $this->getJson('/api/v1/models');
 
         $response->assertOk();
         $response->assertJsonPath('object', 'list');
@@ -32,7 +32,7 @@ class OpenAiCompatibilityApiTest extends TestCase
             'key' => 'test-key',
         ]);
 
-        $response = $this->getJson('/api/v1/nextzakir/tailscale-policy/models');
+        $response = $this->getJson('/api/v1/models');
 
         $response->assertOk();
         $response->assertJsonFragment(['id' => 'gemini']);
@@ -54,10 +54,9 @@ class OpenAiCompatibilityApiTest extends TestCase
             'gemini-2.5-flash-lite',
         ]);
 
-        $response = $this->getJson('/api/v1/nextzakir/tailscale-policy/models');
+        $response = $this->getJson('/api/v1/models');
 
         $response->assertOk();
-        $response->assertJsonFragment(['id' => 'gemini']);
         $response->assertJsonFragment(['id' => 'gemini-3-flash-preview']);
         $response->assertJsonFragment(['id' => 'gemini-2.5-flash-lite']);
         $response->assertJsonFragment(['id' => 'gemini-custom-default']);
@@ -70,7 +69,7 @@ class OpenAiCompatibilityApiTest extends TestCase
             'key' => 'test-key',
         ]);
 
-        $response = $this->getJson('/api/v1/nextzakir/tailscale-policy/models');
+        $response = $this->getJson('/api/v1/models');
 
         $response->assertOk();
         $response->assertJsonFragment([
@@ -83,7 +82,7 @@ class OpenAiCompatibilityApiTest extends TestCase
     {
         RepositoryAssistant::fake(['Repo says hello.']);
 
-        $response = $this->postJson('/api/v1/nextzakir/tailscale-policy/chat/completions', [
+        $response = $this->postJson('/api/v1/chat/completions', [
             'model' => 'gemini',
             'messages' => [
                 [
@@ -120,7 +119,7 @@ class OpenAiCompatibilityApiTest extends TestCase
 
     public function test_chat_completions_requires_messages_array(): void
     {
-        $response = $this->postJson('/api/v1/nextzakir/tailscale-policy/chat/completions', [
+        $response = $this->postJson('/api/v1/chat/completions', [
             'model' => 'gemini',
         ]);
 
@@ -128,54 +127,9 @@ class OpenAiCompatibilityApiTest extends TestCase
         $response->assertJsonValidationErrors(['messages']);
     }
 
-    public function test_chat_completions_injects_github_context_from_repository_route_parameter(): void
-    {
-        RepositoryAssistant::fake(['Analyzed from repository route parameter.']);
-
-        $response = $this->postJson('/api/v1/nextzakir/tailscale-policy/chat/completions', [
-            'model' => 'gemini',
-            'messages' => [
-                [
-                    'role' => 'user',
-                    'content' => 'Can you explain my policies?',
-                ],
-            ],
-        ]);
-
-        $response->assertOk();
-
-        RepositoryAssistant::assertPrompted(function (AgentPrompt $prompt): bool {
-            return $prompt->contains('GitHub tool context for this request:')
-                && $prompt->contains('- repository: nextzakir/tailscale-policy')
-                && ! $prompt->contains('- path:')
-                && $prompt->contains('Can you explain my policies?');
-        });
-    }
-
-    public function test_chat_completions_works_with_any_repository_name(): void
-    {
-        RepositoryAssistant::fake(['Works with any repo.']);
-
-        $response = $this->postJson('/api/v1/any-owner/any-repo/chat/completions', [
-            'model' => 'gemini',
-            'messages' => [
-                [
-                    'role' => 'user',
-                    'content' => 'Hello',
-                ],
-            ],
-        ]);
-
-        $response->assertOk();
-
-        RepositoryAssistant::assertPrompted(function (AgentPrompt $prompt): bool {
-            return $prompt->contains('repository: any-owner/any-repo');
-        });
-    }
-
     public function test_conversations_endpoint_returns_empty_list_when_no_conversations(): void
     {
-        $response = $this->getJson('/api/v1/acme/platform/conversations');
+        $response = $this->getJson('/api/v1/conversations');
 
         $response->assertOk();
         $response->assertJsonPath('data', []);
@@ -217,7 +171,7 @@ class OpenAiCompatibilityApiTest extends TestCase
             ],
         ]);
 
-        $response = $this->getJson('/api/v1/acme/platform/conversations');
+        $response = $this->getJson('/api/v1/conversations');
 
         $response->assertOk();
         $response->assertJsonCount(3, 'data');
@@ -249,7 +203,7 @@ class OpenAiCompatibilityApiTest extends TestCase
             ]);
         }
 
-        $response = $this->getJson('/api/v1/acme/platform/conversations?per_page=2&page=1');
+        $response = $this->getJson('/api/v1/conversations?per_page=2&page=1');
 
         $response->assertOk();
         $response->assertJsonCount(2, 'data');
@@ -258,13 +212,13 @@ class OpenAiCompatibilityApiTest extends TestCase
         $response->assertJsonPath('meta.current_page', 1);
         $response->assertJsonPath('meta.last_page', 3);
 
-        $response = $this->getJson('/api/v1/acme/platform/conversations?per_page=2&page=2');
+        $response = $this->getJson('/api/v1/conversations?per_page=2&page=2');
 
         $response->assertOk();
         $response->assertJsonCount(2, 'data');
         $response->assertJsonPath('meta.current_page', 2);
 
-        $response = $this->getJson('/api/v1/acme/platform/conversations?per_page=2&page=3');
+        $response = $this->getJson('/api/v1/conversations?per_page=2&page=3');
 
         $response->assertOk();
         $response->assertJsonCount(1, 'data');
