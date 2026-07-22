@@ -78,6 +78,58 @@ class OpenAiCompatibilityApiTest extends TestCase
         ]);
     }
 
+    public function test_models_endpoint_includes_default_provider_fallback_when_providers_empty(): void
+    {
+        config()->set('ai.providers', []);
+        config()->set('ai.default', 'gemini');
+        config()->set('ai.provider_failover.gemini', ['gemini-3-flash-preview']);
+
+        $response = $this->getJson('/api/v1/models');
+
+        $response->assertOk();
+        $response->assertJsonFragment(['id' => 'gemini-3-flash-preview']);
+    }
+
+    public function test_models_endpoint_default_fallback_uses_driver_from_config(): void
+    {
+        config()->set('ai.providers', []);
+        config()->set('ai.default', 'custom_gemini_connection');
+        config()->set('ai.providers.custom_gemini_connection', [
+            'driver' => 'gemini',
+            'key' => '',
+        ]);
+
+        $response = $this->getJson('/api/v1/models');
+
+        $response->assertOk();
+        $response->assertJsonFragment([
+            'id' => 'custom_gemini_connection',
+            'owned_by' => 'gemini',
+        ]);
+    }
+
+    public function test_models_endpoint_default_fallback_does_not_duplicate_already_listed_provider(): void
+    {
+        config()->set('ai.providers.gemini', [
+            'driver' => 'gemini',
+            'key' => 'test-key',
+            'models' => [
+                'text' => [
+                    'default' => 'gemini-2.0-flash',
+                ],
+            ],
+        ]);
+        config()->set('ai.default', 'gemini');
+
+        $response = $this->getJson('/api/v1/models');
+
+        $response->assertOk();
+        $models = collect($response->json('data'));
+        $geminiEntries = $models->filter(fn (array $m): bool => $m['owned_by'] === 'gemini');
+        $this->assertCount(1, $geminiEntries, 'Default provider should not duplicate models');
+        $this->assertSame('gemini-2.0-flash', $geminiEntries->first()['id']);
+    }
+
     public function test_chat_completions_returns_openai_compatible_response_shape(): void
     {
         RepositoryAssistant::fake(['Repo says hello.']);
